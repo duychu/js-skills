@@ -36,7 +36,7 @@ then install `teams` from it:
 ```bash
 claude
 # 1. Add this repo as a plugin marketplace (git URL)
-/plugin marketplace add js-skills https://github.com/duychu/js-skills.git
+/plugin marketplace add js-skills duychu/js-skills
 # 2. Install the teams plugin from that marketplace
 /plugin install teams@js-skills
 exit
