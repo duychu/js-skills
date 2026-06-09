@@ -30,15 +30,35 @@ claude --dangerously-skip-permissions \
 ## Git-based install (production)
 
 The same `.claude-plugin/marketplace.json` works when this repo is fetched
-over git. Once the repo is pushed, users run:
+over git. In a Claude Code session, add the marketplace from the git URL,
+then install `teams` from it:
 
 ```bash
+claude
+# 1. Add this repo as a plugin marketplace (git URL)
 /plugin marketplace add js-skills https://github.com/duychu/js-skills.git
+# 2. Install the teams plugin from that marketplace
+/plugin install teams@js-skills
+exit
 ```
 
-…and Claude Code resolves `teams/` from the checkout. No HTTP
-endpoint on the AI platform is required — Claude Code's marketplace
-schema only supports path / git sources, not HTTP tarballs.
+Claude Code resolves `teams/` from the checkout. No HTTP endpoint on the AI
+platform is required — Claude Code's marketplace schema only supports path /
+git sources, not HTTP tarballs.
+
+Then configure and run it (same as local install):
+
+```bash
+claude
+/teams:configure
+exit
+
+claude --dangerously-skip-permissions \
+       --channels plugin:teams@js-skills
+```
+
+To update later, run `/plugin marketplace update js-skills` followed by
+`/plugin install teams@js-skills`.
 
 ## Adding more channel plugins
 
