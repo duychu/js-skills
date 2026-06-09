@@ -1,0 +1,11 @@
+{
+  "name": "teams",
+  "description": "Microsoft Teams channel for Claude Code — proxies Teams DMs to your local Claude Code session via the ACME AI platform. Configure with /teams:configure.",
+  "version": "0.0.1",
+  "keywords": [
+    "teams",
+    "messaging",
+    "channel",
+    "mcp"
+  ]
+}

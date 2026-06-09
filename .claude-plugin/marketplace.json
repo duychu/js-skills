@@ -1,0 +1,20 @@
+{
+  "name": "js-skills",
+  "version": "1",
+  "owner": {
+    "name": "Claude Code Channels"
+  },
+  "metadata": {
+    "description": "Channel plugins that bridge Claude Code to messaging platforms via this AI platform's gateway.",
+    "pluginRoot": "."
+  },
+  "plugins": [
+    {
+      "name": "teams",
+      "source": "./teams",
+      "description": "Microsoft Teams channel for Claude Code. Configure with /teams:configure.",
+      "version": "0.0.1",
+      "keywords": ["teams", "messaging", "channel", "mcp"]
+    }
+  ]
+}
