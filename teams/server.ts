@@ -41,13 +41,29 @@ function logErr(msg: string): void {
 
 const CHANNEL_DIR = join(homedir(), '.claude', 'channels', 'teams')
 const ENV_FILE = join(CHANNEL_DIR, '.env')
-const PID_FILE = join(CHANNEL_DIR, 'bot.pid')
+// Legacy single-PID file, from before per-instance isolation. Reaped once on
+// upgrade so an old single-session process doesn't linger (see writePidFile).
+const LEGACY_PID_FILE = join(CHANNEL_DIR, 'bot.pid')
 
 function ensureDir(): void {
   if (!existsSync(CHANNEL_DIR)) mkdirSync(CHANNEL_DIR, { recursive: true })
 }
 
-function readEnv(): { SERVER_URL: string; API_KEY: string } {
+// The session instance key. Sourced per-process from TEAMS_INSTANCE (so several
+// `claude` sessions launched from the same repo each get their own identity),
+// falling back to an optional INSTANCE line in the shared .env, then "default".
+// It becomes a routing key and a PID filename, so restrict to safe characters.
+function resolveInstance(envFile: Record<string, string>): string {
+  const raw =
+    (globalThis as { process?: { env: Record<string, string | undefined> } })
+      .process?.env?.TEAMS_INSTANCE ||
+    envFile.INSTANCE ||
+    'default'
+  const cleaned = raw.trim().replace(/[^A-Za-z0-9_-]/g, '')
+  return cleaned || 'default'
+}
+
+function readEnv(): { SERVER_URL: string; API_KEY: string; INSTANCE: string } {
   ensureDir()
   if (!existsSync(ENV_FILE)) {
     logErr(`missing ${ENV_FILE}. Run /teams:configure to create it.`)
@@ -65,39 +81,50 @@ function readEnv(): { SERVER_URL: string; API_KEY: string } {
     logErr(`${ENV_FILE} must define both SERVER_URL and API_KEY.`)
     process.exit(1)
   }
-  return { SERVER_URL, API_KEY }
+  return { SERVER_URL, API_KEY, INSTANCE: resolveInstance(env) }
 }
 
-function writePidFile(): void {
-  ensureDir()
-  // Best-effort orphan cleanup: if a previous PID is still alive, kill it.
-  if (existsSync(PID_FILE)) {
-    try {
-      const prior = parseInt(readFileSync(PID_FILE, 'utf8'), 10)
-      if (prior && prior !== process.pid) {
+// SIGTERM the live process recorded in `pidFile`, if any, then return whether
+// one was reaped. Best-effort: a dead/foreign PID is left alone.
+function reapPidFile(pidFile: string): void {
+  if (!existsSync(pidFile)) return
+  try {
+    const prior = parseInt(readFileSync(pidFile, 'utf8'), 10)
+    if (prior && prior !== process.pid) {
+      try {
+        process.kill(prior, 0)
         try {
-          process.kill(prior, 0)
-          try {
-            process.kill(prior, 'SIGTERM')
-          } catch {
-            /* not ours to kill */
-          }
+          process.kill(prior, 'SIGTERM')
         } catch {
-          /* not running */
+          /* not ours to kill */
         }
+      } catch {
+        /* not running */
       }
-    } catch {
-      /* ignore */
     }
+  } catch {
+    /* ignore */
   }
-  writeFileSync(PID_FILE, String(process.pid), { mode: 0o600 })
+}
+
+function writePidFile(pidFile: string): void {
+  ensureDir()
+  // Reap a prior session of THIS instance (matches the platform's newest-wins
+  // policy), and one-time reap the legacy single-PID file so an old
+  // pre-isolation process doesn't linger after upgrade. Different-instance
+  // sessions use a different file and are left untouched, so several `claude`
+  // sessions from the same repo can run side by side.
+  reapPidFile(pidFile)
+  reapPidFile(LEGACY_PID_FILE)
+  writeFileSync(pidFile, String(process.pid), { mode: 0o600 })
 }
 
 // ── MCP server ─────────────────────────────────────────────────────────────
 
-const { SERVER_URL, API_KEY } = readEnv()
-writePidFile()
-logErr(`booting; SERVER_URL=${SERVER_URL} key=${API_KEY.slice(0, 6)}…`)
+const { SERVER_URL, API_KEY, INSTANCE } = readEnv()
+const PID_FILE = join(CHANNEL_DIR, `bot.${INSTANCE}.pid`)
+writePidFile(PID_FILE)
+logErr(`booting; SERVER_URL=${SERVER_URL} key=${API_KEY.slice(0, 6)}… instance=${INSTANCE}`)
 
 const mcp = new Server(
   { name: 'teams', version: '0.0.1' },
@@ -117,10 +144,11 @@ const mcp = new Server(
     },
     instructions: [
       'Messages arrive as <channel source="teams" turn_id="..."> tags carrying',
-      'a Microsoft Teams DM the user just sent. To answer, call the `reply`',
-      'tool with the `turn_id` attribute from the tag and your reply text;',
-      'the AI platform forwards your reply back to Teams. Each turn_id can be',
-      'replied to at most once.',
+      'a Microsoft Teams message the user just sent — it may be a 1:1 DM or a',
+      'group chat that the platform routes to this session. To answer, call the',
+      '`reply` tool with the `turn_id` attribute from the tag and your reply',
+      'text; the AI platform forwards your reply back to the same Teams',
+      'conversation. Each turn_id can be replied to at most once.',
     ].join(' '),
   },
 )
@@ -167,6 +195,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           headers: {
             authorization: `Bearer ${API_KEY}`,
             'content-type': 'application/json',
+            'x-proxy-instance': INSTANCE,
           },
           body: JSON.stringify({ turn_id, text }),
         })
@@ -277,6 +306,7 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
       headers: {
         authorization: `Bearer ${API_KEY}`,
         'content-type': 'application/json',
+        'x-proxy-instance': INSTANCE,
       },
       body: JSON.stringify(params),
     })
@@ -407,7 +437,7 @@ function jitter(ms: number): number {
 async function streamLoop(): Promise<void> {
   while (!shuttingDown) {
     abortCtrl = new AbortController()
-    const url = `${SERVER_URL}/v1/proxy/stream`
+    const url = `${SERVER_URL}/v1/proxy/stream?instance=${encodeURIComponent(INSTANCE)}`
 
     // Abort the fetch if the TCP handshake or TLS takes too long.
     const connectTimer = setTimeout(() => abortCtrl?.abort(), CONNECT_TIMEOUT_MS)
@@ -421,6 +451,7 @@ async function streamLoop(): Promise<void> {
         headers: {
           authorization: `Bearer ${API_KEY}`,
           accept: 'text/event-stream',
+          'x-proxy-instance': INSTANCE,
         },
         signal: abortCtrl.signal,
       })

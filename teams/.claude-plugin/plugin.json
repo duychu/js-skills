@@ -1,6 +1,6 @@
 {
   "name": "teams",
-  "description": "Microsoft Teams channel for Claude Code — proxies Teams DMs to your local Claude Code session via the ACME AI platform. Configure with /teams:configure.",
+  "description": "Microsoft Teams channel for Claude Code — relays Teams DMs and group chats to your local Claude Code session(s) via the ACME AI platform. One bot can route different Teams groups to different sessions (TEAMS_INSTANCE + /agent proxy[<key>]). Configure with /teams:configure; debug with /teams:status.",
   "version": "0.0.1",
   "keywords": [
     "teams",

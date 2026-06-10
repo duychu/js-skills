@@ -31,7 +31,11 @@ talk to.
    API_KEY=<key>
    ```
    Use the Write tool. Make sure parent directories exist
-   (`~/.claude/channels/teams/` may not exist yet).
+   (`~/.claude/channels/teams/` may not exist yet). `SERVER_URL` and `API_KEY`
+   are shared by all of this user's sessions — the file is read-only at startup,
+   so running several sessions against it is fine. Do **not** put the session
+   instance here as a hard setting (see step 5); an optional `INSTANCE=<key>`
+   line only acts as a fallback default when `TEAMS_INSTANCE` isn't exported.
 
 4. **Verify.** Issue a `GET` to `${SERVER_URL}/v1/proxy/health` with the
    header `Authorization: Bearer ${API_KEY}`. If the response is
@@ -51,11 +55,34 @@ talk to.
      install the plugin into the default config so this happens
      automatically.
 
+   **Running multiple sessions (one bot across several Teams groups).** Each
+   Claude Code session is identified by a per-process instance key. Launch each
+   session with its own `TEAMS_INSTANCE`, then point the matching Teams group at
+   it with `/agent proxy[<key>]` in that group:
+
+   ```bash
+   # laptop session
+   TEAMS_INSTANCE=laptop claude --channels plugin:teams@js-skills
+   # then in the Teams group that should reach this session:
+   #   /agent proxy[laptop]
+
+   # server session (same repo, different terminal/host)
+   TEAMS_INSTANCE=server claude --channels plugin:teams@js-skills
+   #   /agent proxy[server]
+   ```
+
+   A session launched without `TEAMS_INSTANCE` uses the `default` instance, and a
+   Teams group with no `proxy[<key>]` suffix routes to `default` — so the common
+   single-session setup needs no extra flags. Use **/teams:status** to confirm
+   which instance a session resolved to and whether it's the active subscriber.
+
 ## What you don't do
 
 - **Don't write the API key into chat output.** Always treat it as a
   secret; only the `.env` file should hold it.
 - **Don't try to start anything yourself.** The MCP server is launched by
   Claude Code via `.mcp.json` when the channel is enabled.
-- **Don't ask about access control.** V1 trusts the AI platform's
-  binding-level scoping — there's no per-plugin allowlist to set up yet.
+- **Don't ask about access control.** The AI platform's binding-level scoping
+  is the source of truth for which conversations reach a session (refined by the
+  `TEAMS_INSTANCE` / `/agent proxy[<key>]` pairing); there's no per-plugin
+  allowlist to set up here.

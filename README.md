@@ -30,13 +30,13 @@ claude --dangerously-skip-permissions \
 ## Git-based install (production)
 
 The same `.claude-plugin/marketplace.json` works when this repo is fetched
-over git. In a Claude Code session, add the marketplace from the git URL,
+over git. In a Claude Code session, add the marketplace from the github owner/repo,
 then install `teams` from it:
 
 ```bash
 claude
-# 1. Add this repo as a plugin marketplace (git URL)
-/plugin marketplace add js-skills duychu/js-skills
+# 1. Add this repo as a plugin marketplace (github owner/repo)
+/plugin marketplace add duychu/js-skills
 # 2. Install the teams plugin from that marketplace
 /plugin install teams@js-skills
 exit
