@@ -11,9 +11,12 @@
   "plugins": [
     {
       "name": "teams",
+      "author": {
+        "name": "Duy Chu"
+      },
       "source": "./teams",
       "description": "Microsoft Teams channel for Claude Code. Configure with /teams:configure.",
-      "version": "0.0.1",
+      "version": "0.0.3",
       "keywords": ["teams", "messaging", "channel", "mcp"]
     }
   ]
