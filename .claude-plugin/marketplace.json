@@ -16,7 +16,7 @@
       },
       "source": "./teams",
       "description": "Microsoft Teams channel for Claude Code. Configure with /teams:configure.",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "keywords": ["teams", "messaging", "channel", "mcp"]
     }
   ]

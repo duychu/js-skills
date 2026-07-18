@@ -7,6 +7,16 @@ for your user shows up as a `<channel>` notification in your Claude Code
 transcript. You answer with the `reply` tool; the platform forwards the text
 back to the same Teams conversation.
 
+**Outbound tools.** Simple requests are answered with a single `reply`. For
+multi-stage work you can send interim updates with `say` (an out-of-turn
+message — a plan, then a mid-report) and close the turn with one `reply`. When
+you ask the user something that needs an answer, `schedule_reminder` books a
+durable nudge (delivered by the platform even if the session ends;
+auto-cancelled when the user next replies), and `cancel_reminder` clears one.
+The `/teams:answering` skill guides when to use one vs. many messages and when
+to remind. All of this plugin's tools are auto-approved, so they never prompt
+the Teams user for permission.
+
 **Multiple sessions, one bot.** Each Claude Code session is identified by a
 per-process instance key (`TEAMS_INSTANCE`). The same bot can sit in several
 Teams groups and route each group to a *different* session: launch each session
