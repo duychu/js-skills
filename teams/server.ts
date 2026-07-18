@@ -253,27 +253,46 @@ const PermissionRequestSchema = z.object({
   }),
 })
 
-// Tools whose permission prompts get auto-approved locally instead of being
-// round-tripped through Teams. Defaults to `__reply` so the plugin's own
-// outbound tool never spams the user — they installed this channel
-// specifically so Claude could reply. Override / extend via the env file
-// (~/.claude/channels/teams/.env), comma-separated; each entry is matched
-// as both an exact tool name and a suffix.
+// This channel plugin's own MCP tools are ALWAYS auto-approved. The user
+// installed the Teams channel specifically so Claude could operate it, so
+// prompting for permission on every reply/say/etc. would just spam their
+// Teams DM. Claude Code namespaces plugin tools as
+// `mcp__plugin_<plugin>_<server>__<tool>` — for this plugin both <plugin>
+// and <server> are `teams`, so every tool we expose shares this prefix.
+// Matching the whole prefix means any tool we add later is auto-allowed
+// automatically, with no list to keep in sync.
+const OWN_TOOL_PREFIX = 'mcp__plugin_teams_teams__'
+
+// The tool names this plugin's ListTools handler registers — used only as a
+// fallback in case a permission request ever carries the bare (unqualified)
+// tool name instead of the fully-namespaced one. Keep in sync with ListTools.
+const OWN_TOOL_NAMES = ['reply']
+
+function isOwnTool(toolName: string): boolean {
+  if (toolName.startsWith(OWN_TOOL_PREFIX)) return true
+  return OWN_TOOL_NAMES.some(n => toolName === n || toolName.endsWith(`__${n}`))
+}
+
+// Additional, NON-plugin tools an operator explicitly wants auto-approved for
+// this channel. Comma-separated in the env file (~/.claude/channels/teams/.env);
+// each entry matches as an exact tool name or a suffix. Patterns ending in `__`
+// match Claude Code's `mcp__plugin_<plugin>_<server>__<tool>` shape. This does
+// NOT auto-allow arbitrary tools by default — only the channel's own tools are
+// unconditionally allowed (see isOwnTool); anything else is opt-in here.
 //
-//   TEAMS_AUTO_ALLOW=__reply,mcp__plugin_teams_teams__reply
-//
-// Patterns ending in `__` also match any tool whose full name ends that way,
-// which covers Claude Code's `mcp__plugin_<plugin>_<server>__<tool>` shape.
+//   TEAMS_AUTO_ALLOW=mcp__plugin_other_server__some_tool
 const AUTO_ALLOW_PATTERNS = ((): string[] => {
   const raw = (globalThis as { process?: { env: Record<string, string | undefined> } })
     .process?.env?.TEAMS_AUTO_ALLOW
-  const fromEnv = raw
+  return raw
     ? raw.split(',').map(s => s.trim()).filter(Boolean)
     : []
-  return fromEnv.length ? fromEnv : ['__reply']
 })()
 
 function shouldAutoAllow(toolName: string): boolean {
+  // The channel's own tools are always auto-approved.
+  if (isOwnTool(toolName)) return true
+  // Plus any extra tools the operator opted into via TEAMS_AUTO_ALLOW.
   return AUTO_ALLOW_PATTERNS.some(p => toolName === p || toolName.endsWith(p))
 }
 
