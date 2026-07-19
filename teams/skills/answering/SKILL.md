@@ -60,6 +60,9 @@ the user goes quiet, the reminder is what nudges them.
   - a weightier decision they'll want to mull over → up to ~600 s (10 min).
 
   Never go below 3 minutes or above 10 minutes.
+- Pass `quote` = the message you're waiting on an answer to (usually the
+  question you just asked). It's shown quoted under the reminder so the user
+  sees exactly what they need to respond to.
 - Write the reminder text so it **stands alone** (they may read it later, out of
   context): e.g. `"Reminder: I still need your pick on the schema change — option A or B?"`
 - **Don't stack duplicates** — at most one pending reminder per open question.

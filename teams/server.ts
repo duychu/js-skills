@@ -257,6 +257,11 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             description:
               'Absolute UTC time to fire, ISO-8601 (e.g. 2026-07-18T15:30:00Z). Use this or delay_seconds.',
           },
+          quote: {
+            type: 'string',
+            description:
+              'The original message you are waiting on an answer to (usually the question you just asked). It is quoted back in the reminder so the user sees what it refers to. Optional; if omitted the platform quotes your last message.',
+          },
         },
       },
     },
@@ -349,6 +354,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       } else {
         return errResult('schedule_reminder requires delay_seconds or remind_at')
       }
+      if (args.quote) body.quote = String(args.quote)
       try {
         const r = await postProxy('/v1/proxy/reminder', body)
         if (!r.ok) {
