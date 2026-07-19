@@ -48,17 +48,23 @@ final `reply`.
 
 ## When to schedule a reminder
 
-If your message **asks the user for something they need to act on** (a decision,
-an approval, an answer) and it would matter if they forget, call
-`schedule_reminder` after sending it:
+Whenever your message **asks the user for something they must act on** (a
+decision, an approval, an answer), you **must** call `schedule_reminder` right
+after sending it. This is not optional for a message that needs a response — if
+the user goes quiet, the reminder is what nudges them.
 
-- Pick a sensible delay with `delay_seconds` (e.g. 1800 for 30 minutes) or an
-  absolute `remind_at` (ISO-8601 UTC).
-- Write the reminder text so it stands alone (the user may see it much later):
-  e.g. `"Reminder: I still need your pick on the schema change (option A or B)."`
-- **Don't stack duplicates** — schedule at most one reminder per open question.
-- You don't need to cancel it when the user answers; the platform cancels
-  pending reminders automatically on their next reply.
+- **Delay** — set `delay_seconds` based on how long the user likely needs to
+  think it over, **between 3 and 10 minutes** (180–600 s):
+  - a quick yes/no or an easy pick → ~180 s (3 min);
+  - a choice that needs a little consideration → ~300 s (5 min);
+  - a weightier decision they'll want to mull over → up to ~600 s (10 min).
+
+  Never go below 3 minutes or above 10 minutes.
+- Write the reminder text so it **stands alone** (they may read it later, out of
+  context): e.g. `"Reminder: I still need your pick on the schema change — option A or B?"`
+- **Don't stack duplicates** — at most one pending reminder per open question.
+- Don't cancel it when they answer; the platform cancels pending reminders
+  automatically on the user's next reply.
 
 Do **not** schedule a reminder for messages that don't need a user response
 (status updates, completed results, FYIs).
