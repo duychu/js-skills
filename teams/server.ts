@@ -126,6 +126,42 @@ const PID_FILE = join(CHANNEL_DIR, `bot.${INSTANCE}.pid`)
 writePidFile(PID_FILE)
 logErr(`booting; SERVER_URL=${SERVER_URL} key=${API_KEY.slice(0, 6)}… instance=${INSTANCE}`)
 
+// Tool result builders (keep the `type: 'text'` literal so the MCP SDK's
+// result type is satisfied when returned from a helper).
+const okResult = (text: string) => ({ content: [{ type: 'text' as const, text }] })
+const errResult = (text: string) => ({
+  content: [{ type: 'text' as const, text }],
+  isError: true,
+})
+
+// POST JSON to a platform proxy endpoint with the standard auth + instance
+// headers, and normalize the response for tool handlers. Shared by the
+// outbound tools (say / schedule_reminder / cancel_reminder).
+async function postProxy(
+  path: string,
+  body: unknown,
+): Promise<{ ok: boolean; status: number; detail: string; json: any }> {
+  const res = await fetch(`${SERVER_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${API_KEY}`,
+      'content-type': 'application/json',
+      'x-proxy-instance': INSTANCE,
+    },
+    body: JSON.stringify(body),
+  })
+  const raw = await res.text().catch(() => '')
+  let json: any = null
+  let detail = ''
+  try {
+    json = raw ? JSON.parse(raw) : null
+  } catch {
+    detail = raw
+  }
+  if (!res.ok && !detail) detail = raw
+  return { ok: res.ok, status: res.status, detail, json }
+}
+
 const mcp = new Server(
   { name: 'teams', version: '0.0.1' },
   {
@@ -145,10 +181,20 @@ const mcp = new Server(
     instructions: [
       'Messages arrive as <channel source="teams" turn_id="..."> tags carrying',
       'a Microsoft Teams message the user just sent — it may be a 1:1 DM or a',
-      'group chat that the platform routes to this session. To answer, call the',
-      '`reply` tool with the `turn_id` attribute from the tag and your reply',
-      'text; the AI platform forwards your reply back to the same Teams',
-      'conversation. Each turn_id can be replied to at most once.',
+      'group chat that the platform routes to this session.',
+      'For a simple request, answer with a single `reply` call, passing the',
+      '`turn_id` attribute from the tag and your reply text.',
+      'For a multi-stage request (e.g. the user asks you to plan then work),',
+      'you may send interim updates with the `say` tool (a plan, then progress /',
+      'a mid-report), and then finish the turn with one `reply` carrying the',
+      'result. `say` delivers an out-of-turn Teams message; `reply` closes the',
+      'turn and must be called exactly once, last. Keep interim messages few and',
+      'meaningful — do not narrate every step.',
+      'Whenever you ask the user something that needs an answer, you must call',
+      '`schedule_reminder` to nudge them if they go quiet — pick a delay of 3 to',
+      '10 minutes based on how much thought the question needs; the platform',
+      'delivers it durably even if this session ends. See the `answering` skill',
+      'for when to split messages and how to choose the reminder delay.',
     ].join(' '),
   },
 )
@@ -170,6 +216,62 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           text: {
             type: 'string',
             description: 'The reply body to send to the Teams user (markdown).',
+          },
+        },
+      },
+    },
+    {
+      name: 'say',
+      description:
+        'Send an interim, out-of-turn message to the Teams user during a multi-stage answer (e.g. a plan, then a mid-report). Does NOT close the turn — finish with `reply`. Use only when the request warrants staged updates; a simple question should be answered with a single `reply`.',
+      inputSchema: {
+        type: 'object',
+        required: ['text'],
+        properties: {
+          text: {
+            type: 'string',
+            description: 'The message body to send to the Teams user (markdown).',
+          },
+        },
+      },
+    },
+    {
+      name: 'schedule_reminder',
+      description:
+        'Schedule a durable nudge to the Teams user (e.g. when you asked them something and want to remind them if they go quiet). The platform delivers it even if this session ends. Provide either delay_seconds or remind_at. Cancelled automatically when the user next replies.',
+      inputSchema: {
+        type: 'object',
+        required: ['text'],
+        properties: {
+          text: {
+            type: 'string',
+            description: 'The reminder body to send to the Teams user (markdown).',
+          },
+          delay_seconds: {
+            type: 'number',
+            description:
+              'Fire this many seconds from now (1 s .. 7 days). Use this or remind_at.',
+          },
+          remind_at: {
+            type: 'string',
+            description:
+              'Absolute UTC time to fire, ISO-8601 (e.g. 2026-07-18T15:30:00Z). Use this or delay_seconds.',
+          },
+        },
+      },
+    },
+    {
+      name: 'cancel_reminder',
+      description:
+        'Cancel a scheduled reminder by reminder_id, or all pending reminders for this session when reminder_id is omitted.',
+      inputSchema: {
+        type: 'object',
+        required: [],
+        properties: {
+          reminder_id: {
+            type: 'string',
+            description:
+              'The reminder id returned by schedule_reminder. Omit to cancel all pending reminders for this session.',
           },
         },
       },
@@ -221,6 +323,68 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
       }
     }
+    case 'say': {
+      const text = String(args.text ?? '')
+      if (!text) return errResult('say requires text')
+      try {
+        const r = await postProxy('/v1/proxy/message', { text })
+        if (!r.ok) {
+          logErr(`say failed HTTP ${r.status}: ${r.detail.slice(0, 300)}`)
+          return errResult(`say failed: HTTP ${r.status} ${r.detail.slice(0, 300)}`)
+        }
+        return okResult('sent (interim message)')
+      } catch (err) {
+        logErr(`say network error: ${String(err)}`)
+        return errResult(`say network error: ${String(err)}`)
+      }
+    }
+    case 'schedule_reminder': {
+      const text = String(args.text ?? '')
+      if (!text) return errResult('schedule_reminder requires text')
+      const body: Record<string, unknown> = { text }
+      if (args.delay_seconds !== undefined && args.delay_seconds !== null) {
+        body.delay_seconds = Number(args.delay_seconds)
+      } else if (args.remind_at) {
+        body.remind_at = String(args.remind_at)
+      } else {
+        return errResult('schedule_reminder requires delay_seconds or remind_at')
+      }
+      try {
+        const r = await postProxy('/v1/proxy/reminder', body)
+        if (!r.ok) {
+          logErr(`schedule_reminder failed HTTP ${r.status}: ${r.detail.slice(0, 300)}`)
+          return errResult(
+            `schedule_reminder failed: HTTP ${r.status} ${r.detail.slice(0, 300)}`,
+          )
+        }
+        const id = r.json?.reminder_id ?? ''
+        const fire = r.json?.fire_at ?? ''
+        return okResult(
+          `reminder scheduled${id ? ` (id ${id})` : ''}${fire ? ` for ${fire}` : ''}`,
+        )
+      } catch (err) {
+        logErr(`schedule_reminder network error: ${String(err)}`)
+        return errResult(`schedule_reminder network error: ${String(err)}`)
+      }
+    }
+    case 'cancel_reminder': {
+      const body: Record<string, unknown> = {}
+      if (args.reminder_id) body.reminder_id = String(args.reminder_id)
+      try {
+        const r = await postProxy('/v1/proxy/reminder/cancel', body)
+        if (!r.ok) {
+          logErr(`cancel_reminder failed HTTP ${r.status}: ${r.detail.slice(0, 300)}`)
+          return errResult(
+            `cancel_reminder failed: HTTP ${r.status} ${r.detail.slice(0, 300)}`,
+          )
+        }
+        const n = r.json?.cancelled ?? 0
+        return okResult(`cancelled ${n} reminder(s)`)
+      } catch (err) {
+        logErr(`cancel_reminder network error: ${String(err)}`)
+        return errResult(`cancel_reminder network error: ${String(err)}`)
+      }
+    }
     default:
       return {
         content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }],
@@ -253,27 +417,46 @@ const PermissionRequestSchema = z.object({
   }),
 })
 
-// Tools whose permission prompts get auto-approved locally instead of being
-// round-tripped through Teams. Defaults to `__reply` so the plugin's own
-// outbound tool never spams the user — they installed this channel
-// specifically so Claude could reply. Override / extend via the env file
-// (~/.claude/channels/teams/.env), comma-separated; each entry is matched
-// as both an exact tool name and a suffix.
+// This channel plugin's own MCP tools are ALWAYS auto-approved. The user
+// installed the Teams channel specifically so Claude could operate it, so
+// prompting for permission on every reply/say/etc. would just spam their
+// Teams DM. Claude Code namespaces plugin tools as
+// `mcp__plugin_<plugin>_<server>__<tool>` — for this plugin both <plugin>
+// and <server> are `teams`, so every tool we expose shares this prefix.
+// Matching the whole prefix means any tool we add later is auto-allowed
+// automatically, with no list to keep in sync.
+const OWN_TOOL_PREFIX = 'mcp__plugin_teams_teams__'
+
+// The tool names this plugin's ListTools handler registers — used only as a
+// fallback in case a permission request ever carries the bare (unqualified)
+// tool name instead of the fully-namespaced one. Keep in sync with ListTools.
+const OWN_TOOL_NAMES = ['reply', 'say', 'schedule_reminder', 'cancel_reminder']
+
+function isOwnTool(toolName: string): boolean {
+  if (toolName.startsWith(OWN_TOOL_PREFIX)) return true
+  return OWN_TOOL_NAMES.some(n => toolName === n || toolName.endsWith(`__${n}`))
+}
+
+// Additional, NON-plugin tools an operator explicitly wants auto-approved for
+// this channel. Comma-separated in the env file (~/.claude/channels/teams/.env);
+// each entry matches as an exact tool name or a suffix. Patterns ending in `__`
+// match Claude Code's `mcp__plugin_<plugin>_<server>__<tool>` shape. This does
+// NOT auto-allow arbitrary tools by default — only the channel's own tools are
+// unconditionally allowed (see isOwnTool); anything else is opt-in here.
 //
-//   TEAMS_AUTO_ALLOW=__reply,mcp__plugin_teams_teams__reply
-//
-// Patterns ending in `__` also match any tool whose full name ends that way,
-// which covers Claude Code's `mcp__plugin_<plugin>_<server>__<tool>` shape.
+//   TEAMS_AUTO_ALLOW=mcp__plugin_other_server__some_tool
 const AUTO_ALLOW_PATTERNS = ((): string[] => {
   const raw = (globalThis as { process?: { env: Record<string, string | undefined> } })
     .process?.env?.TEAMS_AUTO_ALLOW
-  const fromEnv = raw
+  return raw
     ? raw.split(',').map(s => s.trim()).filter(Boolean)
     : []
-  return fromEnv.length ? fromEnv : ['__reply']
 })()
 
 function shouldAutoAllow(toolName: string): boolean {
+  // The channel's own tools are always auto-approved.
+  if (isOwnTool(toolName)) return true
+  // Plus any extra tools the operator opted into via TEAMS_AUTO_ALLOW.
   return AUTO_ALLOW_PATTERNS.some(p => toolName === p || toolName.endsWith(p))
 }
 
