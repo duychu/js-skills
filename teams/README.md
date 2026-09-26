@@ -120,6 +120,19 @@ Teams ──▶ AI platform (gateway) ──▶ proxy_agent ──▶ ProxyHub
                                        this plugin ── POST ──▶ AI platform ──▶ Teams
 ```
 
+Each turn arrives with the speaker attached, both as tag attributes and as a
+text prefix:
+
+```
+<channel source="teams" turn_id="9f2c…" user="Alice" user_id="c4cb…" chat_type="groupChat">
+Alice: hello
+</channel>
+```
+
+`chat_type` is `personal`, `groupChat` or `channel`. The platform sets these
+values (the plugin passes the turn's `meta` through unchanged), so Claude can
+tell who is speaking when several people share one group chat.
+
 ## Env file
 
 `~/.claude/channels/teams/.env` (mode `0o600`):

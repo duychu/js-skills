@@ -9,6 +9,22 @@ Teams messages reach you as `<channel source="teams" turn_id="...">` tags. You
 answer through this plugin's MCP tools. This skill covers **how many messages to
 send** and **when to set a reminder**.
 
+## What a turn looks like
+
+```
+<channel source="teams" turn_id="9f2c…" user="Alice" user_id="c4cb…" chat_type="groupChat">
+Alice: can you check the build?
+</channel>
+```
+
+- `user` / `user_id` identify who sent the message, and `chat_type` is
+  `personal` (a 1:1 DM), `groupChat` or `channel`.
+- The text always starts with `<user>: `. That prefix tells you who is speaking;
+  it is not part of the request. Don't repeat it back.
+- In a group or channel, several people may talk to you in the same session.
+  Keep track of who asked what, and address people by name when that makes the
+  answer clearer ("Alice, the build is green; Bob, your PR still fails lint").
+
 ## Tools you use
 
 - **`reply`** — closes the turn. Pass the `turn_id` from the tag and your text.
